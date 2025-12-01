@@ -16,7 +16,6 @@ from .two_view import (
     estimate_essential,
     recover_pose_from_E,
     triangulate_points,
-    # filter_triangulated_points,  # no longer used in Week 3 pipeline
 )
 
 
@@ -36,15 +35,15 @@ class SfMState:
     Global state for incremental SfM reconstruction.
     World frame is defined by the bootstrap first camera.
     """
-    K: np.ndarray                                      # 3x3 intrinsics
-    images: List[Path] = field(default_factory=list)  # list of image paths
+    K: np.ndarray    
+    images: List[Path] = field(default_factory=list) 
 
     # camera poses in WORLD frame: X_cam = R * X_world + t
     poses: Dict[int, Tuple[np.ndarray, np.ndarray]] = field(default_factory=dict)
 
     # 3D structure in WORLD frame
-    points3d: List[List[float]] = field(default_factory=list)   # list of [x, y, z]
-    colors: List[List[float]] = field(default_factory=list)     # list of [B, G, R]
+    points3d: List[List[float]] = field(default_factory=list)
+    colors: List[List[float]] = field(default_factory=list)
 
     # tracks: (img_idx, kp_idx) -> point index
     tracks: Dict[Tuple[int, int], int] = field(default_factory=dict)
@@ -72,7 +71,7 @@ class SfMState:
         for two images (img_idx0 and img_idx1).
 
         Colors are sampled from `color_image` at keypoints in img_idx0
-        (kp_indices0), exactly like in the notebook implementation.
+        (kp_indices0)
         """
         pts3d_world = np.asarray(pts3d_world, dtype=np.float64)
         n_pts = pts3d_world.shape[0]
@@ -124,8 +123,6 @@ def compute_image_features(
 ) -> Dict[int, ImageFeatures]:
     """
     Compute and store features for all images.
-    SIFT with nfeatures=5000 should be configured inside create_detector("SIFT")
-    to match the notebook.
     """
     detector = create_detector(detector_method)
     features: Dict[int, ImageFeatures] = {}
@@ -150,8 +147,7 @@ def bootstrap_two_view(
     max_depth: float = 1000.0,
 ) -> None:
     """
-    Initialize SfM from images idx0 and idx1 using the SAME logic
-    as the Week 3 notebook:
+    Initialize SfM from images idx0 and idx1:
 
       - SIFT + FLANN + ratio test matching
       - Essential matrix with RANSAC
@@ -173,7 +169,6 @@ def bootstrap_two_view(
 
     pts0, pts1 = matches_to_points(f0.keypoints, f1.keypoints, matches)
 
-    # --- Essential matrix with RANSAC (same as notebook) ---
     E, mask_E = estimate_essential(state.K, pts0, pts1)
     inliers_E = mask_E.ravel().astype(bool)
     pts0_in = pts0[inliers_E]
@@ -183,7 +178,6 @@ def bootstrap_two_view(
     if pts0_in.shape[0] < 8:
         raise RuntimeError("Not enough inliers after Essential RANSAC.")
 
-    # --- Recover pose & cheirality mask ---
     R, t, mask_pose = recover_pose_from_E(E, state.K, pts0_in, pts1_in)
     cheirality_mask = mask_pose.ravel().astype(bool)
     pts0_ch = pts0_in[cheirality_mask]
@@ -193,11 +187,10 @@ def bootstrap_two_view(
     if pts0_ch.shape[0] < 8:
         raise RuntimeError("Not enough points after cheirality check in bootstrap.")
 
-    # --- Triangulate in camera-0/world frame ---
-    # This uses P0 = K[I|0], P1 = K[R|t], exactly like the notebook.
+
     pts3d = triangulate_points(state.K, R, t, pts0_ch, pts1_ch)
 
-    # --- Filter like the notebook: finite, 0 < z < max_depth ---
+
     valid_finite = np.isfinite(pts3d).all(axis=1)
     z = pts3d[:, 2]
     valid_depth = (z > 0.0) & (z < max_depth)
@@ -209,30 +202,25 @@ def bootstrap_two_view(
     if pts3d_filt.shape[0] == 0:
         raise RuntimeError("No valid 3D points after filtering in bootstrap.")
 
-    # Map filtered points back to original matches for keypoint indices
-    #  inliers_E: mask on original matches -> pts0_in/pts1_in
-    #  cheirality_mask: mask on pts0_in/pts1_in -> pts0_ch/pts1_ch
-    #  valid_mask: mask on pts0_ch/pts1_ch -> pts3d_filt
-    inlier_ids = np.where(inliers_E)[0]           # indices into original matches
-    pose_ids = inlier_ids[cheirality_mask]        # after cheirality
-    good_ids = pose_ids[valid_mask]               # after depth filter
+
+    inlier_ids = np.where(inliers_E)[0] 
+    pose_ids = inlier_ids[cheirality_mask] 
+    good_ids = pose_ids[valid_mask] 
 
     kp_ids0 = [matches[i].queryIdx for i in good_ids]
     kp_ids1 = [matches[i].trainIdx for i in good_ids]
 
-    # --- Set camera poses in WORLD frame ---
-    # World frame = camera idx0
+
     state.add_pose(idx0, np.eye(3), np.zeros((3, 1)))
     state.add_pose(idx1, R, t)
 
-    # Triangulated points are already in camera-0/world frame
     state.add_points(
         pts3d_world=pts3d_filt,
         img_idx0=idx0,
         kp_indices0=kp_ids0,
         img_idx1=idx1,
         kp_indices1=kp_ids1,
-        color_image=f0.img,  # sample colors from first image like notebook
+        color_image=f0.img,
     )
     print(f"[bootstrap] Bootstrap complete. Initial 3D points: {len(state.points3d)}")
 
@@ -245,7 +233,7 @@ def register_new_view(
     max_depth: float = 1000.0,
 ) -> None:
     """
-    Register a new view incrementally, matching the Week 3 notebook pipeline:
+    Register a new view incrementally:
 
       1. Match features between ref image and new image
       2. Build 2D–3D correspondences from ref image tracks
@@ -264,14 +252,13 @@ def register_new_view(
     f_ref = state.features[ref_idx]
     f_new = state.features[new_idx]
 
-    # --- Match features (ref -> new) ---
+
     matches = match_features(f_ref.descriptors, f_new.descriptors)
     print(f"[register] {len(matches)} matches between ref={ref_idx} and new={new_idx}")
 
     if len(matches) < min_inliers:
         raise RuntimeError("Not enough descriptor matches between ref and new image.")
 
-    # --- Build 2D–3D correspondences for PnP using ref image tracks ---
     object_points = []
     image_points = []
     matches_for_triangulation = []
@@ -279,12 +266,10 @@ def register_new_view(
     for m in matches:
         key_ref = (ref_idx, m.queryIdx)
         if key_ref in state.tracks:
-            # This ref keypoint already has a 3D point: use for PnP
             p_idx = state.tracks[key_ref]
             object_points.append(state.points3d[p_idx])
             image_points.append(f_new.keypoints[m.trainIdx].pt)
         else:
-            # New candidate to triangulate later
             matches_for_triangulation.append(m)
 
     object_points = np.array(object_points, dtype=np.float32)
@@ -294,7 +279,6 @@ def register_new_view(
     if object_points.shape[0] < min_inliers:
         raise RuntimeError("Not enough 2D–3D correspondences for PnP.")
 
-    # --- Solve PnP to get new camera pose in WORLD frame ---
     success, rvec, tvec, inliers = cv2.solvePnPRansac(
         object_points,
         image_points,
@@ -308,15 +292,12 @@ def register_new_view(
     t_new = tvec.reshape(3, 1)
     print(f"[register] PnP inliers: {inliers.shape[0]}")
 
-    # Store new pose in WORLD frame
     state.add_pose(new_idx, R_new, t_new)
 
-    # --- Triangulate NEW points between ref and new camera (like notebook) ---
     if len(matches_for_triangulation) == 0:
         print("[register] No matches left for triangulation.")
         return
 
-    # Collect 2D points for triangulation
     pts_ref_tri = []
     pts_new_tri = []
     for m in matches_for_triangulation:
@@ -326,8 +307,6 @@ def register_new_view(
     pts_ref_tri = np.float32(pts_ref_tri)
     pts_new_tri = np.float32(pts_new_tri)
 
-    # Get camera matrices in WORLD frame:
-    # ref pose
     if ref_idx not in state.poses:
         raise RuntimeError("Reference view has no stored pose.")
     R_ref, t_ref = state.poses[ref_idx]
@@ -335,11 +314,9 @@ def register_new_view(
     P_ref = state.K @ np.hstack((R_ref, t_ref))
     P_new = state.K @ np.hstack((R_new, t_new))
 
-    # Triangulate using world-frame cameras, just like in the notebook
     pts4d = cv2.triangulatePoints(P_ref, P_new, pts_ref_tri.T, pts_new_tri.T)
-    pts3d_world = (pts4d[:3] / pts4d[3]).T  # Nx3
+    pts3d_world = (pts4d[:3] / pts4d[3]).T
 
-    # Filter with simple depth + norm constraints (same spirit as notebook)
     finite_mask = np.isfinite(pts3d_world).all(axis=1)
     z = pts3d_world[:, 2]
     depth_mask = z > 0.0
@@ -353,7 +330,6 @@ def register_new_view(
 
     pts3d_valid = pts3d_world[valid_mask]
 
-    # Build corresponding keypoint index lists for the valid points
     tri_matches = np.array(matches_for_triangulation)
     valid_indices = np.where(valid_mask)[0]
 
@@ -365,8 +341,6 @@ def register_new_view(
         kp_ref_new.append(m.queryIdx)
         kp_new_new.append(m.trainIdx)
 
-    # NOTE: For colors, the notebook uses the CURRENT image (curr_idx).
-    # So we pass new_idx as img_idx0 and use kp_new_new for color sampling.
     state.add_points(
         pts3d_world=pts3d_valid,
         img_idx0=new_idx,
