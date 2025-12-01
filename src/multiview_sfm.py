@@ -242,7 +242,6 @@ def register_new_view(
          already have 3D (matches_for_triangulation)
       5. Filter by finite, 0 < z < max_depth
       6. Add new 3D points, sampling COLORS from the NEW image
-         (exactly like your notebook)
 
     Args:
         state: global SfM state
