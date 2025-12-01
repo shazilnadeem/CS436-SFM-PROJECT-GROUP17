@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pdb
+*.pkl
+
+# VSCode
+.vscode/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment files
+.env
+.venv/
+env/
+venv/
+*.egg-info/
+
+# Build artifacts
+build/
+dist/
+
+# Open3D cache
+*.json
+
+# macOS / Windows junk
+.DS_Store
+Thumbs.db
+
