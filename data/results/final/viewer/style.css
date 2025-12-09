@@ -20,17 +20,13 @@ body {
   pointer-events: none;
 } */
 
-/* #overlay {
-  display: none;   /* temporarily hide overlay */
-/* } */ 
+
 
 #overlay {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
+  display: none !important;
 }
 
-/* show image as small panel in corner */
+
 .tour-image {
   position: absolute;
   right: 20px;
@@ -55,4 +51,9 @@ body {
 
 #ui button {
   padding: 8px 16px;
+}
+
+
+.tour-image {
+  display: none !important;
 }

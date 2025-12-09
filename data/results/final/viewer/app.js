@@ -9,18 +9,15 @@ const imgB = document.getElementById("imgB");
 const prevBtn = document.getElementById("prevBtn");
 const nextBtn = document.getElementById("nextBtn");
 
-// ---- image config: we use JPGs in data/images/images_jpg ----
 const IMAGE_BASE = "../../../images/images_jpg/";
 const IMAGE_EXT = ".jpg";
 
 function resolveImageFileName(name) {
-  // Strip any existing extension and force .jpg
   const dot = name.lastIndexOf(".");
   const base = dot === -1 ? name : name.slice(0, dot);
   return base + IMAGE_EXT;
 }
 
-// -------------------------------------------------------------
 
 let scene, renderer, camera;
 let corridorGroup;
@@ -41,6 +38,12 @@ const endQuat = new THREE.Quaternion();
 
 const CAMERA_BACK_OFFSET = 2.0; // how far we stand behind each pose
 
+// Hotspots
+const hotspotMeshes = [];
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+let groundY = 0; // estimated floor height from point cloud
+
 init();
 
 async function init() {
@@ -58,7 +61,6 @@ async function init() {
     0.01,
     1000
   );
-  
 
   corridorGroup = new THREE.Group();
   scene.add(corridorGroup);
@@ -67,9 +69,6 @@ async function init() {
 
   await loadPointCloud();
   await loadCameras();
-
-  // Optional: if path direction feels backwards, uncomment:
-  // cameraNodes.reverse();
 
   // orbit controls for "stand here and look around"
   controls = new OrbitControls(camera, renderer.domElement);
@@ -83,12 +82,13 @@ async function init() {
   setCameraToNode(cameraNodes[currentIndex]);
   showImageForIndex(currentIndex, true);
 
-  // Set initial controls target straight ahead
   updateControlsTarget();
 
   window.addEventListener("resize", onResize);
   prevBtn.addEventListener("click", () => triggerStep(-1));
   nextBtn.addEventListener("click", () => triggerStep(1));
+
+  canvas.addEventListener("pointerdown", onPointerDown);
 
   animate();
 }
@@ -107,6 +107,11 @@ async function loadPointCloud() {
       "../dense_corridor.ply", // data/results/final/dense_corridor.ply
       geometry => {
         geometry.computeVertexNormals();
+        geometry.computeBoundingBox();
+        if (geometry.boundingBox) {
+          groundY = geometry.boundingBox.min.y; // approximate floor level
+        }
+
         const material = new THREE.PointsMaterial({
           size: 0.02,
           sizeAttenuation: true,
@@ -133,10 +138,8 @@ async function loadCameras() {
     const mat = new THREE.Matrix4();
     mat.fromArray(T);
 
-    // Metashape: world->camera, Three.js needs camera->world
     mat.invert();
 
-    // Fix orientation: flip 180° around X so floor is down, ceiling up
     const fix = new THREE.Matrix4().makeRotationX(Math.PI);
     mat.multiply(fix);
 
@@ -148,6 +151,65 @@ async function loadCameras() {
   // preload first image
   const firstFile = resolveImageFileName(cameraNodes[0].imageName);
   imgA.src = IMAGE_BASE + firstFile;
+
+  // create hotspots for ALL camera poses
+  createHotspots();
+}
+
+function createHotspots() {
+  const geom = new THREE.RingGeometry(0.2, 0.35, 32);
+
+  const baseMat = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 1.0,
+    side: THREE.DoubleSide,
+    depthTest: false,   // draw on top of point cloud
+    depthWrite: false
+  });
+
+  cameraNodes.forEach((entry, idx) => {
+    const ring = new THREE.Mesh(geom, baseMat.clone());
+
+    const pos = new THREE.Vector3();
+    const quat = new THREE.Quaternion();
+    entry.node.getWorldPosition(pos);
+    entry.node.getWorldQuaternion(quat);
+
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(quat);
+    const viewPos = pos.clone().addScaledVector(forward, -CAMERA_BACK_OFFSET);
+
+    ring.position.copy(viewPos);
+    ring.position.y = groundY + 0.1; // a bit above floor
+    ring.rotation.x = -Math.PI / 2;
+
+    ring.userData.index = idx;
+
+    corridorGroup.add(ring);
+    hotspotMeshes.push(ring);
+  });
+}
+
+function onPointerDown(event) {
+  if (isAnimating) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const x = (event.clientX - rect.left) / rect.width;
+  const y = (event.clientY - rect.top) / rect.height;
+
+  mouse.x = x * 2 - 1;
+  mouse.y = -(y * 2 - 1);
+
+  raycaster.setFromCamera(mouse, camera);
+
+  const hits = raycaster.intersectObjects(hotspotMeshes, false);
+  if (hits.length > 0) {
+    const hotspot = hits[0].object;
+    const idx = hotspot.userData.index;
+    if (typeof idx === "number") {
+      startTransitionTo(idx);
+    }
+  }
 }
 
 function setCameraToNode(camEntry) {
@@ -157,7 +219,6 @@ function setCameraToNode(camEntry) {
   camEntry.node.getWorldPosition(worldPos);
   camEntry.node.getWorldQuaternion(worldQuat);
 
-  // Move camera a bit *behind* the pose along its forward direction
   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(worldQuat);
   const viewPos = worldPos.clone().addScaledVector(forward, -CAMERA_BACK_OFFSET);
 
@@ -182,7 +243,6 @@ function startTransitionTo(newIndex) {
   if (newIndex === currentIndex) return;
   targetIndex = newIndex;
 
-  // disable mouse-look during animation
   if (controls) controls.enabled = false;
 
   const fromNode = cameraNodes[currentIndex].node;
@@ -198,7 +258,6 @@ function startTransitionTo(newIndex) {
   toNode.getWorldPosition(toPos);
   toNode.getWorldQuaternion(toQuat);
 
-  // Apply the same "step back" offset to both endpoints
   const fromForward = new THREE.Vector3(0, 0, -1).applyQuaternion(fromQuat);
   const toForward = new THREE.Vector3(0, 0, -1).applyQuaternion(toQuat);
 
