@@ -205,5 +205,5 @@ Ensures cameras, images, and points remain aligned in the final viewer.
 ---
 
 ## Demonstration Video
-[![Demo Video](https://img.icons8.com/?size=512&id=59813&format=png)](https://drive.google.com/file/d/1-WGQwF8KxVIHH3iXtd2YSuCKYrp6yr95/view?usp=sharing)
+[Click here](https://drive.google.com/file/d/1-WGQwF8KxVIHH3iXtd2YSuCKYrp6yr95/view?usp=sharing)
 
